@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/471026444.svg)](https://zenodo.org/badge/latestdoi/471026444)
+
 # Identification of Patients with Recent Cerebrovascular Symptoms by Combined Clinical and Carotid Plaque’s Calcium Imaging Data Using Interpretable Machine Learning
 This repository contains the code to reproduce the experiments of "Identification of Patients with Recent Cerebrovascular Symptoms by Combined Clinical and Carotid Plaque’s Calcium Imaging Data Using Interpretable Machine Learning", currently under review at JACC: Cardiovascular Imaging.
 
