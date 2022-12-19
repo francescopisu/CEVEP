@@ -21,28 +21,59 @@ install.packages("ggsci")
 install.packages("cvms")
 install.packages("gridBase")
 install.packages("dplyr")
+install.packages("dcurves")
+install.packages("gtsummary")
 ```
 
 ```{r}
 library("pROC")
 library("PRROC")
+library("ROCR")
 library("stringr")
 library("boot")
 library("MLmetrics")
 library("ggplot2")
+library("ggpubr")
 library("yardstick")
 library("ggsci")
 library("cvms")
 library("gridBase")
+library("gridExtra")
 library("grid")
 library("dplyr")
+library("tidyr")
+library("reticulate")
+
+library("dcurves")
+library("gtsummary")
 ```
 
 
 # Load predicted probabilities on both training and test sets
 ```{r}
-train = read.csv('../output/results/train_target_proba.csv')
-test = read.csv('../output/results/test_target_proba.csv')
+#train = read.csv('../output/results/train_target_proba.csv')
+test_gt_probas = read.csv('../output/predictions/test_preds_tuned_LGBM_all_features_0035_70trials.csv')
+test_gt_probas_clinical = read.csv('../output/predictions/test_preds_tuned_LGBM_only_clinical_0035_70trials.csv')
+test_gt_probas_calcification = read.csv('../output/predictions/test_preds_tuned_LGBM_only_calcification_0035_70trials.csv')
+#external = read.csv("../input/external.csv")
+```
+
+```{r}
+external$MLS_score = test_gt_probas$proba
+external$symptoms = ifelse(external$symptoms == "yes", 1, 0)
+external$prs_either = ifelse(external$prs_either == "yes", 1, 0)
+```
+```{r}
+mod <- glm(symptoms ~ prs_either, external, family = binomial)
+tbl <- tbl_regression(mod, exponentiate = TRUE)
+```
+```{r}
+dca(symptoms ~ age + prs_either + MLS_score, 
+    external, 
+    as_probability = c("age", "prs_either"),
+    thresholds = seq(0.0, 0.9, by = 0.01)) %>%
+  net_intervention_avoided() %>%
+  plot(smooth = TRUE)
 ```
 
 ```{r}
@@ -50,325 +81,722 @@ lightblue <- "#b0c4de"
 salmon <- "#ff8c69"
 ```
 
-
-# ROC curves
 ```{r}
-pdf("../output/plots/roc.pdf", width = 6)
-par(pty="s")
-test.roc <- pROC::roc(test$target, test$proba, ci=TRUE, plot=TRUE,
+# Taking a look at different classification thresholds, all features
+test.roc <- pROC::roc(test_gt_probas$target, test_gt_probas$proba, ci=TRUE, plot=TRUE,
     legacy.axes=TRUE, lwd=3, col=salmon)
-title("ROC curves", line=2.3)
+test.coords <- pROC::coords(roc=test.roc, x = "all", transpose = FALSE)
+test.coords[test.coords$sensitivity >= .50, ]
 
-test.roc.auc <- round(pROC::auc(test.roc), 2)
-test.roc.ci <- pROC::ci.auc(test.roc, method="bootstrap")
+pROC::coords(test.roc, "best", best.method="youden", ret = c("threshold", "sensitivity", "specificity"), transpose = FALSE)
+```
+```{r}
+# Taking a look at different classification thresholds, only clinical features
+test.roc <- pROC::roc(test_gt_probas_clinical$target, test_gt_probas_clinical$proba, ci=TRUE, plot=TRUE,
+    legacy.axes=TRUE, lwd=3, col=salmon)
+test.coords <- pROC::coords(roc=test.roc, x = "all", transpose = FALSE)
+test.coords[test.coords$sensitivity >= .50, ]
 
-train.roc <- pROC::roc(train$target, train$proba, ci=TRUE, add=TRUE, plot=TRUE,
-    legacy.axes=TRUE, lwd=3, col=lightblue)
+pROC::coords(test.roc, "best", best.method="youden", ret = c("threshold", "sensitivity", "specificity"), transpose = FALSE)
+```
 
-train.roc.auc <- round(pROC::auc(train.roc), 2)
-train.roc.ci <- pROC::ci.auc(train.roc, method="bootstrap")
+```{r}
+# Taking a look at different classification thresholds, only calcification variables
+test.roc <- pROC::roc(test_gt_probas_calcification$target, test_gt_probas_calcification$proba, ci=TRUE, plot=TRUE,
+    legacy.axes=TRUE, lwd=3, col=salmon)
+test.coords <- pROC::coords(roc=test.roc, x = "all", transpose = FALSE)
+test.coords[test.coords$sensitivity >= .50, ]
 
-roc.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{train.roc.auc} [$[.2f]{train.roc.ci[1]}-$[.2f]{train.roc.ci[3]}]")
-roc.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{test.roc.auc} [$[.2f]{test.roc.ci[1]}-$[.2f]{test.roc.ci[3]}]")
+pROC::coords(test.roc, "best", best.method="youden", ret = c("threshold", "sensitivity", "specificity"), transpose = FALSE)
+```
 
-legend("bottomright", 
-       legend = c(roc.test.legend.text, roc.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2)
-dev.off()
+# Compare ROC AUCs
+```{r}
+roc.calcification <- pROC::roc(test_gt_probas_calcification$target, test_gt_probas_calcification$proba)
+roc.clinical <- pROC::roc(test_gt_probas_clinical$target, test_gt_probas_clinical$proba)
+roc.all <- pROC::roc(test_gt_probas$target, test_gt_probas$proba)
+```
+```{r}
+# Does plaque data provide better results when added to clinical data ?
+pROC::roc.test(roc.calcification, roc.all)
+
+# Does clinical data provide better results when added to calcification data ?
+pROC::roc.test(roc.clinical, roc.all, method="bootstrap",
+               boot.n=10000, boot.stratified=TRUE)
 ```
 
 
-# Precision-recall curves
+
 ```{r}
-# build precision-recall curves
+use_condaenv("IPH", required = TRUE)
+```
 
-pr.test <- pr.curve(scores.class0=test$proba, weights.class0=test$target, curve=T,
-                    rand.compute = TRUE)
-pr.train <- pr.curve(scores.class0=train$proba, weights.class0=train$target, curve=T,
-                     rand.compute = TRUE)
-
-test.curve.points <- pr.test$curve
-train.curve.points <- pr.train$curve
-
-#plot(pr.test, auc.main=FALSE, color='salmon', main=NULL, sub=NULL)
-#plot(pr.train, auc.main=FALSE, add=TRUE, color='lightsteelblue', main=NULL, sub=NULL)
+```{python}
+def boot_prauc(preds_df_path):
+  from sklearn.metrics import average_precision_score
+  import pandas as pd
+  import numpy as np
+  import scikits.bootstrap as boot
+  
+  seed = 1303
+  n_boots = 10000
+  
+  df = pd.read_csv(preds_df_path)
+  
+  conf_int, dist = boot.ci(data=(df["target"], df["proba"]),
+                               statfunction=average_precision_score,
+                               multi="paired",
+                               n_samples=n_boots,
+                               method="bca",
+                               seed=seed,
+                               return_dist=True)
+  
+  med = np.median(dist).item()
+  
+  #print(f"Metric name: {metric_name}, Median value:{med} ")
+  test_prauc = "{:.2f} [{:.2f} - {:.2f}]".format(med, conf_int[0], conf_int[1])
+  
+  return test_prauc
 ```
 
 
+# ROC curve
 ```{r}
-# bootstrap AUCs for 95% CI
-set.seed(1303)
-
-fci<-function(data,indices,x,y){
-   d<-as.data.frame(data[indices,])
-   r<-MLmetrics::PRAUC(d[,2], d[,1])
-   r
+plot_roc_ci <- function(df, target, proba) {
+  # bootstrap AUCs for 95% CI
+  set.seed(1303)
+  
+  fci<-function(data,indices,x,y){
+     d<-as.data.frame(data[indices,])
+     r<-MLmetrics::AUC(d[,2], d[,1])
+     r
+  }
+  
+  bootout <- boot(data=df,
+                x=df[, target],
+                y=df[, proba],
+                R=2000,
+                statistic=fci
+                )
+  
+  roc.ci <- boot.ci(bootout, type="perc")
+  roc.legend.text <- stringr::str_interp("Light GBM ($[.2f]{roc.ci$t0} [$[.2f]{roc.ci$percent[4]} - $[.2f]{roc.ci$percent[5]}])")
+  
+  # build ROC curve
+  roc.obj <- pROC::roc(df[, target], df[, proba], plot=FALSE,
+            legacy.axes=TRUE, percent=FALSE)
+  
+  # extract specificities and sensitivities from the roc object
+  spec <- rev(roc.obj$specificities)
+  sens <- rev(roc.obj$sensitivities)
+  dat <- as.data.frame(cbind(1-spec, sens))
+  colnames(dat) <- c("specificity", "sensitivity")
+  
+  # bootstrap confidence intervals around sensitivities 
+  ciobj <- ci.se(roc.obj, specificities = seq(0, 1, l = nrow(dat)))
+  dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                       lower = ciobj[, 1],
+                       upper = ciobj[, 3])
+  
+  points <- data.frame(x=c(1-0.814433,	1-0.40206186), 
+                       y=c(0.5967742, 0.7741935),
+                       shapes=c(4, 24),
+                       lab=c("Youden's J", "Point 2"))
+  points$shapes <- as.factor(points$shapes)
+  points$lab <- as.factor(points$lab)
+  
+  ggplot(dat, aes(x = specificity, y = sensitivity, linetype=roc.legend.text)) +
+  geom_segment(aes(x = 0, y = 0, xend = 1,yend = 1), alpha = 0.5, color="gray",
+               linetype="dashed") +
+  geom_path(aes(specificity, sensitivity), colour=salmon, size=1) +
+  geom_ribbon(
+      aes(x = 1-dat.ci$x, ymin = dat.ci$lower, ymax = dat.ci$upper),
+      fill = lightblue,
+      alpha = 0.2
+  ) +
+  geom_point(data=points, size=3, 
+             fill="red", 
+             mapping=aes(x=x, y=y, shape=shapes),
+             ) +
+  theme(aspect.ratio = 1) +
+  labs(title="ROC curve", x="1 - Specificity", y="Sensitivity") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour="black", fill=NA, size=0.5),
+        axis.title = element_text(size=16),
+        axis.title.x = element_text(margin=margin(t=10)),
+        axis.title.y = element_text(margin=margin(r=10)),
+        plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+        legend.position = c(0.58, 0.12),
+        legend.text = element_text(size=13)) +
+  scale_linetype_manual(name='Legend',
+                 #breaks=c('Linear', 'Quadratic', 'Cubic'),
+                 #values=c('Cubic'='pink', 'Quadratic'='blue', 'Linear'='purple')
+                 labels=c("lab"),
+                 values=c("solid")
+                 ) +
+  #scale_fill_discrete(name="Legend") +
+  scale_shape_manual(name="Legend", values=c(4, 24),
+                     labels=points$lab)
 }
 
-bootout.test <- boot(data=test,
-              x=test$target,
-              y=test$proba,
-              R=2000,
-              statistic=fci
-              )
-
-bootout.train <- boot(data=train,
-              x=train$target,
-              y=train$proba,
-              R=2000,
-              statistic=fci
-              )
-
-prauc.ci.test <- boot.ci(bootout.test, type="perc")
-prauc.ci.train <- boot.ci(bootout.train, type="perc")
-```
-
-
-```{r}
-# compute proprtion of positives in train/test samples for PR curve baseline
-npos.test = length(which(test$target == 1))
-nneg.test = length(which(test$target == 0))
-
-npos.train = length(which(train$target == 1))
-nneg.train = length(which(train$target == 0))
-
-prop.pos.test = npos.test / (npos.test + nneg.test)
-prop.pos.train = npos.train / (npos.train + nneg.train)
-
-prop.pos.test
-prop.pos.train
+roc.curve <- plot_roc_ci(external, "target", "proba")
+roc.curve
 ```
 
 ```{r}
-# plot PR curve alone
+plot_roc_ci <- function(df, target, proba) {
+  # bootstrap AUCs for 95% CI
+  set.seed(1303)
+  
+  fci<-function(data,indices,x,y){
+     d<-as.data.frame(data[indices,])
+     r<-MLmetrics::AUC(d[,2], d[,1])
+     r
+  }
+  
+  bootout <- boot(data=df,
+                x=df[, target],
+                y=df[, proba],
+                R=2000,
+                statistic=fci
+                )
+  
+  roc.ci <- boot.ci(bootout, type="perc")
+  roc.legend.text <- stringr::str_interp("Light GBM ($[.2f]{roc.ci$t0} [$[.2f]{roc.ci$percent[4]} - $[.2f]{roc.ci$percent[5]}])")
+  
+  # build ROC curve
+  roc.obj <- pROC::roc(df[, target], df[, proba], plot=FALSE,
+            legacy.axes=TRUE, percent=FALSE)
+  
+  # extract specificities and sensitivities from the roc object
+  spec <- rev(roc.obj$specificities)
+  sens <- rev(roc.obj$sensitivities)
+  dat <- as.data.frame(cbind(1-spec, sens))
+  colnames(dat) <- c("specificity", "sensitivity")
+  
+  # bootstrap confidence intervals around sensitivities 
+  ciobj <- ci.se(roc.obj, specificities = seq(0, 1, l = nrow(dat)))
+  dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                       lower = ciobj[, 1],
+                       upper = ciobj[, 3])
+  
+  points <- data.frame(x=c(1-0.814433,	1-0.40206186), 
+                       y=c(0.5967742, 0.7741935),
+                       shapes=c(23, 24),
+                       colors=c("#E54624", "#38C9B2"),
+                       lab=c("Point 1 (Youden's Index)", "Point 2"))
+  points$shapes <- as.factor(points$shapes)
+  points$lab <- as.factor(points$lab)
+  
+  ggplot(dat, aes(x = specificity, y = sensitivity)) +
+  geom_segment(aes(x = 0, y = 0, xend = 1,yend = 1), alpha = 0.5, color="gray",
+               linetype="dashed") +
+  geom_path(aes(specificity, sensitivity, 
+                # color=roc.legend.text
+                color=c(salmon)
+                ), 
+            # colour=salmon,
+            linetype = "solid",
+            size=1) +
+  geom_ribbon(
+      aes(x = 1-dat.ci$x, ymin = dat.ci$lower, ymax = dat.ci$upper),
+      fill = lightblue,
+      alpha = 0.2
+  ) +
+  geom_point(data=points, size=4,
+             #fill="red",
+             mapping=aes(x=x, y=y,
+                         # color=shapes,
+                         color=colors,
+                         shape=shapes,
+                         # fill=colors
+                         ),
+             ) +
+  theme(aspect.ratio = 1) +
+  labs(title="ROC curve", x="1 - Specificity", y="Sensitivity") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour="black", fill=NA, size=0.5),
+        axis.title = element_text(size=16),
+        axis.title.x = element_text(margin=margin(t=10)),
+        axis.title.y = element_text(margin=margin(r=10)),
+        plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+        legend.position = c(0.58, 0.12),
+        legend.text = element_text(size=13),
+        legend.title=element_blank()) +
+  scale_color_manual("Pippo", 
+                     values=c(salmon, "#E54624", "#38C9B2"),
+                     labels=c(roc.legend.text, 
+                              "Point 1 (Youden's Index)", 
+                              "Point 2"))
+  #scale_linetype_manual("",
+                 #breaks=c('Linear', 'Quadratic', 'Cubic'),
+                 #values=c('Cubic'='pink', 'Quadratic'='blue', 'Linear'='purple')
+                 #labels=c(roc.legend.text),
+  #               labels=c(roc.legend.text),
+  #               values=c("solid")
+  #               ) +
+  #scale_fill_discrete(name="Legend") +
+  # scale_shape_manual("Pippo", values=c(23, 24),
+  #                    labels=c("Point 1 (Youden's Index)", 
+  #                             "Point 2")
+  #                    # labels=points$lab
+  #                    )
 
-pdf("../output/plots/pr.pdf", width = 6, height=6)
-# precision-recall curves
-par(mar=c(6.1, 4.1, 4.1, 2.1), pty="s")
-plot(test.curve.points[,1], test.curve.points[,2], xlab="Recall", ylab="Precision", t="l",
-     ylim=c(0.0,1.0),
-     lwd=3, col=salmon, asp=1, 
-     ann=FALSE)
-lines(train.curve.points[,1], train.curve.points[,2], xlab="Recall", ylab="Precision", t="l",
-      ylim=c(0.0,1.0),
-     lwd=3, col=lightblue)
-abline(h=prop.pos.train, col="gray", lty=1)
-title("Precision-Recall curves", line=1.8)
-mtext('Recall', side=1, line=2.5, adj=0.5) # x axis
-mtext('Precision', side=2, line=2.5, adj=0.5) # y axis
+  # scale_color_identity(
+  #   name="Pippo",
+  #   breaks=c(salmon, "#E54624", "#38C9B2"),
+  #   labels=c(roc.legend.text, "Point 1 (Youden's Index)", "Point 2"),
+  #   guide="legend"
+  # ) 
+  # scale_shape_manual(
+  #   name="Pippo",
+  #   values=c(23, 24),
+  #   # # labels=c(roc.legend.text, "Point 1 (Youden's Index)", "Point 2"),
+  #   # guide="legend"
+  #   
+  # )
+}
 
-pr.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{prauc.ci.train$t0} [$[.2f]{prauc.ci.train$percent[4]}-$[.2f]{prauc.ci.train$percent[5]}]")
-pr.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{prauc.ci.test$t0} [$[.2f]{prauc.ci.test$percent[4]}-$[.2f]{prauc.ci.test$percent[5]}]")
-
-legend("bottomright", 
-       legend = c(pr.test.legend.text, pr.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2)
-dev.off()
+roc.curve <- plot_roc_ci(external, "target", "proba")
+roc.curve
 ```
 
-
-# Plot ROC and PR curves, side by side
 ```{r}
-pdf("../output/plots/roc_pr.pdf", width = 12)
-
-par(mfcol=c(1,2), pty="s")
-
-# ROC curves
-test.roc <- pROC::roc(test$target, test$proba, ci=TRUE, plot=TRUE,
-    legacy.axes=TRUE, lwd=3, col=salmon)
-title("ROC curves", line=2.3)
-
-test.roc.auc <- round(pROC::auc(test.roc), 2)
-test.roc.ci <- pROC::ci.auc(test.roc, method="bootstrap")
-
-train.roc <- pROC::roc(train$target, train$proba, ci=TRUE, add=TRUE, plot=TRUE,
-    legacy.axes=TRUE, lwd=3, col=lightblue)
-
-train.roc.auc <- round(pROC::auc(train.roc), 2)
-train.roc.ci <- pROC::ci.auc(train.roc, method="bootstrap")
-
-roc.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{train.roc.auc} [$[.2f]{train.roc.ci[1]}-$[.2f]{train.roc.ci[3]}]")
-roc.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{test.roc.auc} [$[.2f]{test.roc.ci[1]}-$[.2f]{test.roc.ci[3]}]")
-
-legend("bottomright", 
-       legend = c(roc.test.legend.text, roc.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2)
-
-# precision-recall curves
-par(mar=c(6.1, 4.1, 4.1, 2.1))
-plot(test.curve.points[,1], test.curve.points[,2], xlab="Recall", ylab="Precision", t="l",
-     ylim=c(0.0,1.0),
-     lwd=3, col=salmon, asp=1, 
-     ann=FALSE)
-lines(train.curve.points[,1], train.curve.points[,2], xlab="Recall", ylab="Precision", t="l",
-      ylim=c(0.0,1.0),
-     lwd=3, col=lightblue)
-abline(h=prop.pos.train, col="gray", lty=1)
-title("Precision-Recall curves", line=1.8)
-mtext('Recall', side=1, line=2.5, adj=0.5) # x axis
-mtext('Precision', side=2, line=2.5, adj=0.5) # y axis
-
-pr.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{prauc.ci.train$t0} [$[.2f]{prauc.ci.train$percent[4]}-$[.2f]{prauc.ci.train$percent[5]}]")
-pr.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{prauc.ci.test$t0} [$[.2f]{prauc.ci.test$percent[4]}-$[.2f]{prauc.ci.test$percent[5]}]")
-
-legend("bottomright", 
-       legend = c(pr.test.legend.text, pr.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2)
-
-dev.off()
-```
-
-# Confusion Matrix
-```{r}
-# threshold of 0.5 allows to have a sensitivity of 90% and a specificity of 42%
-test.coords <- pROC::coords(roc=test.roc, x = "all", transpose = FALSE)
-test.coords[test.coords$sensitivity >= .75, ]
-```
-
-```{r}
-# Build confusion matrix using the cvms package
-test.copy <- data.frame(test)
-
-# convert predicted probabilities to labels using the chosen threshold
-threshold <- 0.5008254
-test.copy$labels <- ifelse(test.copy$proba > threshold, 1, 0)
-
-test.copy$target <- ifelse(test.copy$target == "1", "Symptomatic", "Asymptomatic")
-test.copy$labels <- ifelse(test.copy$labels == "1", "Symptomatic", "Asymptomatic")
-
-eval <- cvms::evaluate(test.copy, target_col = "target", prediction_cols = "labels",
-                       type="binomial")
-```
-
-
-```{r}
-# Plot confusion matrix alone
-
-pdf("../output/plots/conf_matrix.pdf", width=6, height=6)
-cm.plot <- cvms::plot_confusion_matrix(eval, 
-                                       target_col = "Actual",
-                                       prediction_col = "Predicted",
-                                       add_row_percentages = FALSE,
-                                       add_col_percentages = FALSE,
-                                       palette="Blues",
-                                       font_counts = cvms::font(size=6, 
-                                                                color="#342d2d", 
-                                                                vjust=0),
-                                       font_normalized = cvms::font(size=7, 
-                                                                    color="#342d2d", 
-                                                                    vjust=-0.5)) +
-  ggplot2::ggtitle("Predicted and actual events") +
-  ggplot2::theme(axis.title = ggplot2::element_text(size=16),
-                 axis.title.y = ggplot2::element_text(margin = ggplot2::margin(r=25)),
-                 axis.text.x = ggplot2::element_text(size=13),
-                 axis.text.y = ggplot2::element_text(size=13),
-                 axis.ticks.length = ggplot2::unit(-1, "cm"),
-                 plot.title = ggplot2::element_text(size=17, 
-                                                    hjust=0.5, 
-                                                    vjust=4.0,
-                                                    family = "sans",
-                                                    face="bold")
+plot_roc_ci <- function(df, target, proba) {
+  # bootstrap AUCs for 95% CI
+  set.seed(1303)
+  
+  fci<-function(data,indices,x,y){
+     d<-as.data.frame(data[indices,])
+     r<-MLmetrics::AUC(d[,2], d[,1])
+     r
+  }
+  
+  bootout <- boot(data=df,
+                x=df[, target],
+                y=df[, proba],
+                R=10000,
+                statistic=fci
+                )
+  
+  roc.ci <- boot.ci(bootout, type="perc")
+  roc.legend.text <- stringr::str_interp("Light GBM ($[.2f]{roc.ci$t0} [$[.2f]{roc.ci$percent[4]} - $[.2f]{roc.ci$percent[5]}])")
+  
+  # build ROC curve
+  roc.obj <- pROC::roc(df[, target], df[, proba], plot=FALSE,
+            legacy.axes=TRUE, percent=FALSE)
+  
+  # extract specificities and sensitivities from the roc object
+  spec <- rev(roc.obj$specificities)
+  sens <- rev(roc.obj$sensitivities)
+  dat <- as.data.frame(cbind(1-spec, sens))
+  colnames(dat) <- c("specificity", "sensitivity")
+  
+  # bootstrap confidence intervals around sensitivities 
+  ciobj <- ci.se(roc.obj, specificities = seq(0, 1, l = nrow(dat)))
+  dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                       lower = ciobj[, 1],
+                       upper = ciobj[, 3])
+  
+  points <- data.frame(x=c(1-0.814433,	1-0.40206186), 
+                       y=c(0.5967742, 0.7741935),
+                       colors=c("#2E86C1", "#E54624"),
+                       shapes=c(23, 24),
+                       lab=c("Point 1 (Youden's J)", "Point 2"))
+  points$shapes <- as.factor(points$shapes)
+  points$lab <- as.factor(points$lab)
+  
+  ggplot(dat, aes(x = specificity, y = sensitivity, linetype=roc.legend.text)) +
+  geom_segment(aes(x = 0, y = 0, xend = 1,yend = 1), alpha = 0.5, color="gray",
+               linetype="dashed") +
+  geom_path(aes(specificity, sensitivity, linetype=roc.legend.text), colour=salmon, size=1) +
+  geom_ribbon(
+      aes(x = 1-dat.ci$x, ymin = dat.ci$lower, ymax = dat.ci$upper),
+      fill = lightblue,
+      alpha = 0.2
+  ) +
+  geom_point(data=points, size=3, 
+             #fill="red", 
+             mapping=aes(x=x, y=y, shape=shapes, fill=colors),
+             ) +
+  theme(aspect.ratio = 1) +
+  labs(title="", x="1 - Specificity", y="Sensitivity") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour="black", fill=NA, size=0.5),
+        axis.title = element_text(size=16),
+        axis.title.x = element_text(margin=margin(t=10)),
+        axis.title.y = element_text(margin=margin(r=10)),
+        plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+        legend.position = c(0.68, 0.21),
+        legend.text = element_text(size=13)) +
+  scale_linetype_manual(name='Model AUC',
+                 #breaks=c('Linear', 'Quadratic', 'Cubic'),
+                 #values=c('Cubic'='pink', 'Quadratic'='blue', 'Linear'='purple')
+                 #labels=c(roc.legend.text),
+                 values=c("solid")
                  ) +
-  ggplot2::labs(x = "Actual", y = "Predicted")
+  #scale_fill_discrete(name="Legend") +
+  scale_shape_manual(name="Thresholds", values=c(23, 24),
+                     labels=points$lab) +
+  scale_fill_manual(name="Thresholds", values=c("#E54624", "#2E86C1"),
+                     labels=points$lab)
+}
 
-cm.plot
-
-dev.off()
+roc.curve <- plot_roc_ci(external, "target", "proba")
+roc.curve
 ```
-
-
-
-# Final plot: ROC curves, PR curves and confusion matrix in one row
 
 ```{r}
+# only one operational point
+plot_roc_ci <- function(df, target, proba, sens_y, spec_x) {
+  # bootstrap AUCs for 95% CI
+  set.seed(1303)
+  
+  fci<-function(data,indices,x,y){
+     d<-as.data.frame(data[indices,])
+     r<-MLmetrics::AUC(d[,2], d[,1])
+     r
+  }
+  
+  bootout <- boot(data=df,
+                x=df[, target],
+                y=df[, proba],
+                R=10000,
+                statistic=fci
+                )
+  
+  roc.ci <- boot.ci(bootout, type="perc")
+  roc.legend.text <- stringr::str_interp("Light GBM ($[.2f]{roc.ci$t0} [$[.2f]{roc.ci$percent[4]} - $[.2f]{roc.ci$percent[5]}])")
+  
+  # build ROC curve
+  roc.obj <- pROC::roc(df[, target], df[, proba], plot=FALSE,
+            legacy.axes=TRUE, percent=FALSE)
+  
+  # extract specificities and sensitivities from the roc object
+  spec <- rev(roc.obj$specificities)
+  sens <- rev(roc.obj$sensitivities)
+  dat <- as.data.frame(cbind(1-spec, sens))
+  colnames(dat) <- c("specificity", "sensitivity")
+  
+  # bootstrap confidence intervals around sensitivities 
+  ciobj <- ci.se(roc.obj, specificities = seq(0, 1, l = nrow(dat)))
+  dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                       lower = ciobj[, 1],
+                       upper = ciobj[, 3])
+  
+  # points <- data.frame(x=c(1-0.742268), 
+  #                      y=c(0.6451613),
+  #                      colors=c("#2E86C1"),
+  #                      shapes=c(23),
+  #                      lab=c("Youden's J"))
+  points <- data.frame(x=c(1-spec_x), 
+                       y=c(sens_y),
+                       colors=c("#2E86C1"),
+                       shapes=c(23),
+                       lab=c("Youden's J"))  
+  points$shapes <- as.factor(points$shapes)
+  points$lab <- as.factor(points$lab)
+  
+  ggplot(dat, aes(x = specificity, y = sensitivity, linetype=roc.legend.text)) +
+  geom_segment(aes(x = 0, y = 0, xend = 1,yend = 1), alpha = 0.5, color="gray",
+               linetype="dashed") +
+  geom_path(aes(specificity, sensitivity, linetype=roc.legend.text), colour=salmon, size=1) +
+  geom_ribbon(
+      aes(x = 1-dat.ci$x, ymin = dat.ci$lower, ymax = dat.ci$upper),
+      fill = lightblue,
+      alpha = 0.2
+  ) +
+  geom_point(data=points, size=3, 
+             #fill="red", 
+             mapping=aes(x=x, y=y, shape=shapes, fill=colors),
+             ) +
+  theme(aspect.ratio = 1) +
+  labs(title="", x="1 - Specificity", y="Sensitivity") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour="black", fill=NA, size=0.5),
+        axis.title = element_text(size=16),
+        axis.title.x = element_text(margin=margin(t=10), size=20),
+        axis.title.y = element_text(margin=margin(r=10), size=20),
+        plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+        legend.position = c(0.68, 0.11),
+        legend.text = element_text(size=20)) +
+  scale_linetype_manual(name='Model AUC',
+                 #breaks=c('Linear', 'Quadratic', 'Cubic'),
+                 #values=c('Cubic'='pink', 'Quadratic'='blue', 'Linear'='purple')
+                 #labels=c(roc.legend.text),
+                 values=c("solid")
+                 ) +
+  #scale_fill_discrete(name="Legend") +
+  scale_shape_manual(name="Operational point", values=c(23, 24),
+                     labels=points$lab) +
+  scale_fill_manual(name="Operational point", values=c("#E54624", "#2E86C1"),
+                     labels=points$lab)
+}
 
-pdf("../output/plots/roc_pr_cm.pdf", width = 18, height=7.7)
+roc.curve.all <- plot_roc_ci(test_gt_probas, "target", "proba", sens=0.6451613, spec=0.742268)
+roc.curve.all
+```
+```{r}
+roc.curve.calcification <- plot_roc_ci(test_gt_probas_calcification, "target", "proba", 
+                         sens_y=0.6451613, 
+                         spec_x=0.7938144)
+roc.curve.calcification
+```
 
-par(mfrow=c(1,3), pty="s")
+```{r}
+roc.curve.clinical <- plot_roc_ci(test_gt_probas_clinical, "target", "proba", sens=0.5806452, spec=0.6804124)
+roc.curve.clinical
+```
 
-# Plot ROC curves
-test.roc <- pROC::roc(test$target, test$proba, ci=TRUE, plot=TRUE,
-    legacy.axes=TRUE, lwd=3, col=salmon,
-    cex.lab=2.0,
-    cex.axis=1.5,
-    ann=FALSE)
-title(main="ROC curves", line=2.3, cex.main=2.0) 
+# Precision-recall curve
+```{r}
+plot_pr_ci <- function(df, target, proba, preds_path) {
+  # bootstrap AUCs for 95% CI
+  prauc.ci <- py$boot_prauc(preds_path)
+  # $[.2f]{prauc.ci$t0} [$[.2f]{prauc.ci$percent[4]} - $[.2f]{prauc.ci$percent[5]}]
+  pr.legend.text <- stringr::str_interp("Light GBM (${prauc.ci})")
+  
+  # build PR curve
+  roc.obj <- pROC::roc(df[, target], df[, proba], plot=FALSE, legacy.axes=TRUE, percent=FALSE)
+  prcoords <- coords(roc.obj, "all", ret = c("threshold", "recall", "precision"), transpose = FALSE)
+  prcoords[nrow(prcoords), 3] <- 1.0000
+  
+  
+  # bootstrap recall/precision coordinates for 95% confidence bands
+  pr.cis <- ci.coords(roc.obj, prcoords$threshold, ret=c("recall", "precision"))
+  pr.cis <- data.frame(pr.cis[2]) # convert precision coords to data frame
+  pr.cis.df <- data.frame(x = prcoords$recall,
+                       lower = pr.cis[, 1],
+                       upper = pr.cis[, 3])
+  
+  # compute baseline (proportion of positive samples)
+  npos.test = length(which(df[, target] == 1))
+  nneg.test = length(which(df[, target] == 0))
+  prop.pos = npos.test / (npos.test + nneg.test)
+  
+  ggplot(prcoords, aes(recall, precision, linetype=pr.legend.text)) + 
+    geom_path(aes(recall, precision), colour=salmon, size=1) +
+    geom_ribbon(aes(x=pr.cis.df$x, ymin=pr.cis.df$lower, ymax=pr.cis.df$upper), 
+                alpha=0.3,
+                fill=lightblue) +
+    geom_hline(yintercept=prop.pos, linetype='dashed', color='gray') +
+    theme(aspect.ratio = 1) +
+    coord_cartesian(ylim = c(0.0, 1.0)) +
+    labs(title="", x="Recall", y="Precision") +
+    theme(
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(), 
+          panel.border = element_rect(colour="black", fill=NA, size=0.5),
+          axis.title = element_text(size=16),
+          axis.title.x = element_text(margin=margin(t=10), size=20),
+          axis.title.y = element_text(margin=margin(r=10), size=20),
+          plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+          legend.position = c(0.58, 0.12),
+          legend.text = element_text(size=20)
+          ) +
+    scale_linetype_manual(name='', values=c("solid"))
+}
+```
 
-test.roc.auc <- round(pROC::auc(test.roc), 2)
-test.roc.ci <- pROC::ci.auc(test.roc, method="bootstrap")
+## All features
+```{r}
+pr.curve.all <- plot_pr_ci(test_gt_probas, "target", "proba",
+                       preds_path = '../output/predictions/test_preds_tuned_LGBM_all_features_0035_70trials.csv')
+pr.curve.all
+```
 
-train.roc <- pROC::roc(train$target, train$proba, ci=TRUE, add=TRUE, plot=TRUE,
-    legacy.axes=TRUE, lwd=3, col=lightblue)
+## Only calcification
+```{r}
+pr.curve.calcification <- plot_pr_ci(test_gt_probas_calcification, "target", "proba",
+                       preds_path = '../output/predictions/test_preds_tuned_LGBM_only_calcification_0035_70trials.csv')
+pr.curve.calcification
+```
+## Only clinical
+```{r}
+pr.curve.clinical <- plot_pr_ci(test_gt_probas_clinical, "target", "proba",
+                       preds_path = '../output/predictions/test_preds_tuned_LGBM_only_clinical_0035_70trials.csv')
+pr.curve.clinical
+```
 
-train.roc.auc <- round(pROC::auc(train.roc), 2)
-train.roc.ci <- pROC::ci.auc(train.roc, method="bootstrap")
+# Confusion matrix
+```{r}
+make_cm <- function(df, target, proba, threshold) {
+  # Build confusion matrix using the cvms package
+  df.copy <- data.frame(df)
+  
+  # Dichotomize predicted probabilities
+  df.copy$labels <- ifelse(df.copy[, proba] >= threshold, 1, 0)
+  df.copy$target <- ifelse(df.copy[, target] == "1", "Symptomatic", "Asymptomatic")
+  df.copy$labels <- ifelse(df.copy[, "labels"] == "1", "Symptomatic", "Asymptomatic")
+  
+  eval <- cvms::evaluate(df.copy, target_col = "target", prediction_cols = "labels",
+                       type="binomial")
+  
+  cm.plot <- cvms::plot_confusion_matrix(eval, 
+                                         target_col = "Target",
+                                         prediction_col = "Prediction",
+                                         add_row_percentages = FALSE,
+                                         add_col_percentages = FALSE,
+                                         palette="Blues",
+                                         font_counts = cvms::font(size=23, 
+                                                                  color="#342d2d", 
+                                                                  vjust=23),
+                                         font_normalized = cvms::font(size=23, 
+                                                                      color="#342d2d", 
+                                                                      vjust=-0.5)) +
+    ggplot2::ggtitle("") +
+    ggplot2::theme(axis.title = ggplot2::element_text(size=23),
+                   axis.title.y = ggplot2::element_text(margin = ggplot2::margin(r=25)),
+                   axis.text.x = ggplot2::element_text(size=23),
+                   axis.text.y = ggplot2::element_text(size=23),
+                   axis.ticks.length = ggplot2::unit(-1, "cm"),
+                   plot.title = ggplot2::element_text(size=23, 
+                                                      hjust=0.5, 
+                                                      vjust=4.0,
+                                                      family = "sans")
+    ) +
+    ggplot2::labs(x = "Actual", y = "Predicted")
+}
+```
 
-mtext('1 - Specificity', side=1, line=3.0, adj=0.5, cex=1.5) # x axis
-mtext('Sensitivity', side=2, line=2.5, adj=0.5, cex=1.5) # y axis
+## All features, youden
+```{r}
+cm.plot.all <- make_cm(test_gt_probas, "target", "proba", 0.4853442)
+```
 
-roc.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{train.roc.auc} [$[.2f]{train.roc.ci[1]}-$[.2f]{train.roc.ci[3]}]")
-roc.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{test.roc.auc} [$[.2f]{test.roc.ci[1]}-$[.2f]{test.roc.ci[3]}]")
+## Only calcification, youden
+```{r}
+cm.plot.calcification <- make_cm(test_gt_probas_calcification, "target", "proba", 0.5282613)
+```
 
-legend("bottomright", 
-       legend = c(roc.test.legend.text, roc.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2,
-       cex=2)
+## Only clinical
+```{r}
+cm.plot.clinical <- make_cm(test_gt_probas_clinical, "target", "proba", 0.5055034)
+```
 
-mtext("A", adj=0, line=1.5,  cex=1.5, font=2)
+## Old 2x2 grid
+```{r}
+g2 <- ggarrange(plotlist=lapply(list(roc.curve, pr.curve, cm.plot.youden, cm.plot.point2), "+", theme(plot.margin=margin(0, 80, 0, 0))),
+          nrow=2,
+          ncol=2,
+          labels=c("A", "B", "C", "D"),
+          font.label = list(size=25))
+g2 <- annotate_figure(g2, top = textGrob("", gp=gpar(fontsize=20, font=1)))
+#ggsave(file="../output/plots/roc_and_pr_curves.pdf", g2, width = 14, height = 12)
+#ggsave(file="../output/plots/TIFF/roc_and_pr_curves.tiff", g2, width = 14, height = 12, device="tiff", dpi=700)
+g2
+```
 
-# Plot Precision-Recall curves
-par(mar=c(6.1, 4.1, 4.1, 2.1))
-
-plot(test.curve.points[,1], test.curve.points[,2], 
-     xlab="Recall", ylab="Precision", 
-     t="l",
-     ylim=c(0.0,1.0),
-     lwd=3, col=salmon, asp=1,
-     cex.lab=2.0,
-     cex.axis=1.5,
-     mgp=c(2.2,0.5,0),
-     ann=FALSE) #mgp allows moving axis labels further/closer to the xticks (first arg), 2nd arg deals with xticks labels
-lines(train.curve.points[,1], train.curve.points[,2], 
-      xlab="Recall", 
-      ylab="Precision", 
-      t="l",
-      ylim=c(0.0,1.0),
-      lwd=3, col=lightblue)
-
-abline(h=prop.pos.train, col="gray", lty=1)
-title(main="Precision-Recall curves", line=1.8, cex.main=2.0)
-mtext('Recall', side=1, line=3.2, adj=0.5, cex=1.5) # x axis
-mtext('Precision', side=2, line=3.0, adj=0.5, cex=1.5) # y axis
-
-pr.train.legend.text <- stringr::str_interp("Train AUC $[.2f]{prauc.ci.train$t0} [$[.2f]{prauc.ci.train$percent[4]}-$[.2f]{prauc.ci.train$percent[5]}]")
-pr.test.legend.text <- stringr::str_interp("Test  AUC $[.2f]{prauc.ci.test$t0} [$[.2f]{prauc.ci.test$percent[4]}-$[.2f]{prauc.ci.test$percent[5]}]")
-
-legend("bottomright", 
-       legend = c(pr.test.legend.text, pr.train.legend.text), 
-       col = c(salmon, lightblue),
-       lwd = 2,
-       cex=2)
-
-mtext("B", adj=0, line=1.5,  cex=1.5, font=2)
-
-
-mtext(text="Assessment of model performance", side = 1, line = -46, cex=2.0)
-
-
-# confusion matrix
-plot.new()              ## suggested by @Josh
-vps <- baseViewports()
-pushViewport(vps$figure) ##   I am in the space of the autocorrelation plot
-vp1 <-plotViewport(c(1.8,1,0,1))
-
-print(cm.plot, vp=vp1)
-mtext("C", adj=0, line=1.5,  cex=1.5, font=2)
-
+## All features
+```{r}
+tiff("../output/plots/TIFF/roc_and_pr_curves_test.tiff", units="in", width=25, height=8, res=1200, compression = "lzw",
+     type="cairo")
+g2 <- ggarrange(plotlist=lapply(list(roc.curve.all, pr.curve.all, cm.plot.all), "+", theme(plot.margin=margin(0, 20, 0, 0))),
+          nrow=1,
+          ncol=3,
+          labels=c("A", "B", "C"),
+          font.label = list(size=25))
+g2 <- annotate_figure(g2, top = textGrob("", gp=gpar(fontsize=20, font=1)))
+g2
 dev.off()
 ```
+
+## Only calcification
+```{r}
+tiff("../output/plots/TIFF/roc_and_pr_curves_test_only_calcification.tiff", units="in", width=25, height=10, res=1200, compression = "lzw",
+     type="cairo")
+g2 <- ggarrange(plotlist=lapply(list(roc.curve.calcification, pr.curve.calcification, cm.plot.calcification), "+", theme(plot.margin=margin(0, 200, 0, 0))),
+          nrow=1,
+          ncol=3,
+          labels=c("A", "B", "C"),
+          font.label = list(size=25))
+g2 <- annotate_figure(g2, top = textGrob("", gp=gpar(fontsize=20, font=1)))
+g2
+dev.off()
+```
+
+## Only clinical data
+```{r}
+tiff("../output/plots/TIFF/roc_and_pr_curves_test_only_clinical.tiff", units="in", width=25, height=6, res=1200, compression = "lzw",
+     type="cairo")
+g2 <- ggarrange(plotlist=lapply(list(roc.curve.clinical, pr.curve.clinical, cm.plot.clinical), "+", theme(plot.margin=margin(0, 200, 0, 0))),
+          nrow=1,
+          ncol=3,
+          labels=c("A", "B", "C"),
+          font.label = list(size=25))
+g2 <- annotate_figure(g2, top = textGrob("", gp=gpar(fontsize=20, font=1)))
+g2
+dev.off()
+```
+
+## All sets
+```{r}
+tiff("../output/plots/TIFF/roc_and_pr_curves_test_all_sets.tiff", units="in", width=27, height=20, res=1200, compression = "lzw",
+     type="cairo")
+g2 <- ggarrange(plotlist=lapply(list(roc.curve.all, pr.curve.all, cm.plot.all,
+                                     roc.curve.clinical, pr.curve.clinical, cm.plot.clinical,
+                                     roc.curve.calcification, pr.curve.calcification, cm.plot.calcification), "+", theme(plot.margin=margin(0, 200, 0, 0))),
+          nrow=3,
+          ncol=3,
+          labels=c("A", "B", "C", "D", "E", "F", "G", "H", "I"),
+          font.label = list(size=25))
+g2 <- annotate_figure(g2, top = textGrob("", gp=gpar(fontsize=20, font=1)))
+g2
+dev.off()
+```
+
+# calibration
+```{r}
+install.packages("ResourceSelection")
+install.packages("givitiR")
+library("ResourceSelection")
+library("givitiR")
+```
+
+```{r}
+cb <- givitiCalibrationBelt(o = test_gt_probas$target, e = test_gt_probas$proba,
+                            devel = "external", confLevels= .95)
+plot(cb, main = "",
+                          xlab = "LightGBM predicted probability",
+                          ylab = "Observed: proportion of events", col="blue")
+```
+
+```{r}
+tiff("../output/plots/TIFF/calibration.tiff", units="in", width=8, height=5,res=1200, compression = "lzw",
+     type="cairo")
+#options("devEval/args/path"=file.path("../output/plots/TIFF/"))
+
+d <- data.frame(cb$seqP, cb$cbBoundByConfLevel)
+calib <- ggplot(data=d, aes(x=cb.seqP)) +
+  geom_ribbon(aes(ymin=L, ymax=U), color="#426A9E", fill="white", size=2) +
+  #geom_ribbon(aes(ymin=L.1, ymax=U.1), fill="#b0c4de") +
+  #geom_abline(slope=1, intercept=0, color="#D34B22", size=1.5, linetype="solid") +
+  geom_segment(aes(x=0.22, y=0.22, xend=0.86, yend=0.86), color="#D34B22", size=1.5) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour="black", fill=NA, size=0.5),
+        axis.title = element_text(size=16),
+        axis.title.x = element_text(margin=margin(t=10)),
+        axis.title.y = element_text(margin=margin(r=10)),
+        plot.title = element_text(hjust=0.5, size=16, margin=margin(b=20)),
+        legend.position = c(0.58, 0.12),
+        legend.text = element_text(size=13),
+        legend.title=element_blank()) +
+  labs(title="", y="Observed: proportion of events", x="Predicted probabilities")
+#devEval("tiff", name="calibration", width=120, height=800, calib)
+#ggsave(file="../output/plots/TIFF/calibration.tiff", calib, width = 8, height = 5, device="tiff", dpi=800, compression = "lzw", type="cairo")
+calib
+dev.off()
+```
+
 

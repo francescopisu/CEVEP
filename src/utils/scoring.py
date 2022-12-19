@@ -2,34 +2,11 @@
 This file defines methods for computing evaluation metrics of interest.
 """
 import numpy as np
-import lightgbm as lgb
 from typing import Dict, Callable, Tuple
 from sklearn.metrics import confusion_matrix, brier_score_loss
 import scikits.bootstrap as boot
 
 from src._typing import ConfMatrixQuant, Seed, ArrayLike
-
-
-def _brier_loss(y_pred: ArrayLike, dtrue: lgb.Dataset) -> Tuple[str, float, bool]:
-    """
-    Custom evaluation metric for LightGBM training that computes
-    the brier score loss. Lower values are better.
-
-    Parameters
-    ----------
-    y_pred: ArrayLike
-        Predictions of the positive class.
-    dtrue: lgb.Dataset
-        The dataset corresponding to the ground-truths.
-
-    Returns
-    -------
-    Tuple[str, float, bool]
-        A tuple consisting of metric name, value and whether higher
-        values are better or not.
-    """
-    loss = brier_score_loss(dtrue.get_label(), y_pred)
-    return "brier_loss", loss, False
 
 
 def compute_conf_matrix(target_labels: ArrayLike,
@@ -129,18 +106,17 @@ def compute_metrics(preds: ArrayLike,
       a dictionary with metric names and corresponding values.
     """
     # apply threshold to predicted probabilities of +ive class
-    print(preds.shape, preds.ndim)
     if preds.ndim == 2:
         pos_class_proba = preds[:, 1]
     else:
         pos_class_proba = preds
 
-    labels = np.where(pos_class_proba > threshold, 1, 0)
+    labels = np.where(pos_class_proba >= threshold, 1, 0)
 
     scores = {}
     for metric_name, metric_fn in metrics.items():
         if metric_fn:
-            if metric_name in ['auc', 'neg_brier_loss']:
+            if metric_name in ['ROCAUC', 'PRAUC', 'Brier']:
                 # use probabilities of +ive class in this case
                 scores[metric_name] = metric_fn(target, pos_class_proba)
             else:

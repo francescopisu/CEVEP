@@ -11,7 +11,7 @@ from yacs.config import CfgNode  # type: ignore
 from src._typing import PathLike, Estimator, ArrayLike
 
 
-def load_data(conf: CfgNode, test: bool = False) -> Tuple[ArrayLike, ArrayLike]:
+def load_data(conf: CfgNode, which: str = "train") -> Tuple[ArrayLike, ArrayLike]:
     """
     Loads data located in folder conf.DATA.<TRAIN|TEST>_DATA_PATH stored in csv format.
 
@@ -19,19 +19,21 @@ def load_data(conf: CfgNode, test: bool = False) -> Tuple[ArrayLike, ArrayLike]:
     ----------
     conf: CfgNode
         A Configuration node storing configuration information.
-    test: bool (default = False)
-        Whether to load the test data or not.
+    which: str (default = "train")
+        Which dataset to load.
 
     Returns
     -------
-    Union[Tuple[ArrayLike, ArrayLike], Tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
-        A tuple of features and ground-truths corresponding to the test set (if train = False)
-        or a tuple of train features/ground-truths and validation features/ground-truths
-        if train = True and reserve_dev_set = True.
+    Union[Tuple[ArrayLike, ArrayLike]]
+        A tuple of features and ground-truths corresponding to
+        the specified dataset.
     """
-    data_path = conf.DATA.TRAIN_DATA_PATH
-    if test:
+    if which == 'internal_test':
         data_path = conf.DATA.TEST_DATA_PATH
+    elif which == 'external_test':
+        data_path = conf.DATA.EXTERNAL_DATA_PATH
+    else:
+        data_path = conf.DATA.TRAIN_DATA_PATH
 
     data = pd.read_csv(data_path)
     X, y = data.drop(conf.DATA.TARGET, axis=1), data[conf.DATA.TARGET]

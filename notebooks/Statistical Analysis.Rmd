@@ -1,0 +1,766 @@
+---
+title: "Statistical Analysis"
+author: "Francesco Pisu"
+date: '2022-04-13'
+output: html_document
+---
+
+```{r}
+install.packages("olsrr")
+
+library("DescTools")
+library("olsrr")
+library("ggplot2")
+```
+
+
+```{r}
+train = read.csv('../input/train.csv')
+external = read.csv('../input/external.csv')
+```
+
+
+# Derivation cohort
+```{r}
+pop <- train
+
+pos <- train[train$symptoms == "yes",]
+neg <- train[train$symptoms == "no",]
+
+postrain <- train[train$symptoms == "yes",]
+negtrain <- train[train$symptoms == "no",]
+
+pvalues <- list()
+```
+
+```{r}
+MedianCI(pop[, "age"], R = 10000)
+```
+
+
+## Binary Variables
+### Gender
+```{r}
+varname <- "gender"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "male",]
+negf <- neg[neg[, varname] == "male",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Age
+```{r}
+varname <- "age"
+MedianCI(pos[, varname], method="boot", R = 10000)
+MedianCI(neg[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(pos[, varname], neg[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+
+### Hypertension
+```{r}
+varname <- "hypertension"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Smoker
+```{r}
+varname <- "smoker_status"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### CAD
+```{r}
+varname <- "cad"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+
+### Diabetes
+```{r}
+varname <- "diabetes"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)),
+               )
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+### Hyperlipidemia
+```{r}
+varname <- "hyperlipidemia"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Stenosis Left
+```{r}
+varname <- "stenosis_left"
+
+MedianCI(postrain[, varname], method="boot", R = 10000)
+MedianCI(negtrain[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(postrain[, varname], negtrain[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Stenosis Right
+```{r}
+varname <- "stenosis_right"
+
+MedianCI(postrain[, varname], method="boot", R = 10000)
+MedianCI(negtrain[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(postrain[, varname], negtrain[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Calcification Type Left
+```{r}
+# test per differenze tra calc type left e symptoms si/no
+varname <- "calcification_type_left"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+```
+
+#### Type 1
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type1",]
+negf <- neg[neg[, varname] == "Type1",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 2
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type2",]
+negf <- neg[neg[, varname] == "Type2",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 3
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type3",]
+negf <- neg[neg[, varname] == "Type3",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 4
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type4",]
+negf <- neg[neg[, varname] == "Type4",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 5
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type5",]
+negf <- neg[neg[, varname] == "Type5",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 6
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type6",]
+negf <- neg[neg[, varname] == "Type6",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Calcification Type Right
+```{r}
+# test per differenze tra calc type right e symptoms si/no
+varname <- "calcification_type_right"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+```
+
+#### Type 1
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type1",]
+negf <- neg[neg[, varname] == "Type1",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 2
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type2",]
+negf <- neg[neg[, varname] == "Type2",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 3
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type3",]
+negf <- neg[neg[, varname] == "Type3",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 4
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type4",]
+negf <- neg[neg[, varname] == "Type4",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 5
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type5",]
+negf <- neg[neg[, varname] == "Type5",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 6
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type6",]
+negf <- neg[neg[, varname] == "Type6",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+```{r}
+pvalues_copy <- pvalues
+```
+```{r}
+length(pvalues)
+```
+
+```{r}
+pvalues_adj <- round(p.adjust(pvalues, method="BH"), 2)
+```
+
+```{r}
+# demo + clinical
+pvalues_adj[1:9]
+# calc type left
+pvalues_adj[10:15]
+# calc type right
+pvalues_adj[16:21]
+```
+
+
+
+# External cohort
+```{r}
+pop <- external
+
+pos <- external[external$symptoms == "yes",]
+neg <- external[external$symptoms == "no",]
+
+postrain <- external[external$symptoms == "yes",]
+negtrain <- external[external$symptoms == "no",]
+
+pvalues <- list()
+```
+
+
+## Binary Variables
+### Gender
+```{r}
+varname <- "gender"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "male",]
+negf <- neg[neg[, varname] == "male",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Age
+```{r}
+varname <- "age"
+MedianCI(pos[, varname], method="boot", R = 10000)
+MedianCI(neg[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(pos[, varname], neg[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+
+### Hypertension
+```{r}
+varname <- "hypertension"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Smoker
+```{r}
+varname <- "smoker_status"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### CAD
+```{r}
+varname <- "cad"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+
+### Diabetes
+```{r}
+varname <- "diabetes"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)),
+               )
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+
+### Hyperlipidemia
+```{r}
+varname <- "hyperlipidemia"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+posf <- pos[pos[, varname] == "yes",]
+negf <- neg[neg[, varname] == "yes",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Stenosis Left
+```{r}
+varname <- "stenosis_left"
+
+MedianCI(postrain[, varname], method="boot", R = 10000)
+MedianCI(negtrain[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(postrain[, varname], negtrain[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Stenosis Right
+```{r}
+varname <- "stenosis_right"
+
+MedianCI(postrain[, varname], method="boot", R = 10000)
+MedianCI(negtrain[, varname], method="boot", R = 10000)
+
+r <- wilcox.test(postrain[, varname], negtrain[, varname])
+r
+
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Calcification Type Left
+```{r}
+# test per differenze tra calc type left e symptoms si/no
+varname <- "calcification_type_left"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+```
+
+#### Type 1
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type1",]
+negf <- neg[neg[, varname] == "Type1",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 2
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type2",]
+negf <- neg[neg[, varname] == "Type2",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 3
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type3",]
+negf <- neg[neg[, varname] == "Type3",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 4
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type4",]
+negf <- neg[neg[, varname] == "Type4",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 5
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type5",]
+negf <- neg[neg[, varname] == "Type5",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 6
+```{r}
+varname <- "calcification_type_left"
+
+posf <- pos[pos[, varname] == "Type6",]
+negf <- neg[neg[, varname] == "Type6",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+### Calcification Type Right
+```{r}
+# test per differenze tra calc type right e symptoms si/no
+varname <- "calcification_type_right"
+
+table(pop[, varname])
+
+table(pos[, varname])
+prop.table(table(pos[, varname]))
+
+table(neg[, varname])
+prop.table(table(neg[, varname]))
+
+```
+
+#### Type 1
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type1",]
+negf <- neg[neg[, varname] == "Type1",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 2
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type2",]
+negf <- neg[neg[, varname] == "Type2",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 3
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type3",]
+negf <- neg[neg[, varname] == "Type3",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+#### Type 4
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type4",]
+negf <- neg[neg[, varname] == "Type4",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 5
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type5",]
+negf <- neg[neg[, varname] == "Type5",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+#### Type 6
+```{r}
+varname <- "calcification_type_right"
+
+posf <- pos[pos[, varname] == "Type6",]
+negf <- neg[neg[, varname] == "Type6",]
+
+r <- prop.test(c(nrow(posf), nrow(negf)), c(nrow(pos), nrow(neg)))
+r
+pvalues <- append(pvalues, r$p.value)
+```
+
+```{r}
+pvalues_copy <- pvalues
+```
+```{r}
+length(pvalues)
+```
+
+```{r}
+pvalues_adj <- round(p.adjust(pvalues, method="BH"), 2)
+```
+
+```{r}
+# demo + clinical
+pvalues_adj[1:9]
+# calc type left
+pvalues_adj[10:15]
+# calc type right
+pvalues_adj[16:21]
+```
